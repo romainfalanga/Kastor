@@ -57,37 +57,67 @@ export async function callVisionModel(
     ],
   };
 
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://kastor.app",
-      "X-Title": "Kastor",
-    },
-    body: JSON.stringify(body),
-  });
+  // Retries avec backoff sur les erreurs transitoires (429, 5xx, coupures
+  // réseau) ; les erreurs définitives (clé invalide, crédit épuisé, requête
+  // malformée) échouent immédiatement.
+  const MAX_ATTEMPTS = 3;
+  let lastError: OpenRouterError | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(OPENROUTER_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://kastor.app",
+          "X-Title": "Kastor",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      lastError = new OpenRouterError(`Erreur réseau vers OpenRouter : ${String(err)}`, 502);
+      await backoff(attempt);
+      continue;
+    }
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new OpenRouterError(
-      `OpenRouter a répondu ${res.status} : ${text.slice(0, 500)}`,
-      res.status === 401 || res.status === 402 ? res.status : 502,
-    );
-  }
+    if (res.status === 429 || res.status >= 500) {
+      const text = await res.text();
+      lastError = new OpenRouterError(
+        `OpenRouter a répondu ${res.status} : ${text.slice(0, 300)}`,
+        502,
+      );
+      await backoff(attempt);
+      continue;
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new OpenRouterError(
+        `OpenRouter a répondu ${res.status} : ${text.slice(0, 500)}`,
+        res.status === 401 || res.status === 402 ? res.status : 502,
+      );
+    }
 
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-    error?: { message?: string };
-  };
-  if (data.error?.message) {
-    throw new OpenRouterError(`OpenRouter : ${data.error.message}`, 502);
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+      error?: { message?: string };
+    };
+    if (data.error?.message) {
+      throw new OpenRouterError(`OpenRouter : ${data.error.message}`, 502);
+    }
+    const text = data.choices?.[0]?.message?.content;
+    if (!text) {
+      lastError = new OpenRouterError("Réponse OpenRouter vide (pas de contenu).", 502);
+      await backoff(attempt);
+      continue;
+    }
+    return text;
   }
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) {
-    throw new OpenRouterError("Réponse OpenRouter vide (pas de contenu).", 502);
-  }
-  return text;
+  throw lastError ?? new OpenRouterError("Échec des appels OpenRouter après retries.", 502);
+}
+
+function backoff(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
 }
 
 /**

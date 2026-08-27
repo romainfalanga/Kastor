@@ -221,7 +221,16 @@ export default function PlanViewer({
                           onElClick();
                         }
                       }}>
-                        <circle cx={p.x} cy={p.y} r={ux * 1.6} fill={article.color} fillOpacity={0.85} stroke="#fff" strokeWidth={ux * 0.35} />
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={ux * 1.6}
+                          fill={article.color}
+                          fillOpacity={el.source === "vecteur" ? 0.55 : 0.85}
+                          stroke="#fff"
+                          strokeWidth={ux * 0.35}
+                          strokeDasharray={el.source === "vecteur" ? `${ux * 0.7} ${ux * 0.5}` : undefined}
+                        />
                         {el.label && (
                           <text x={p.x + ux * 2.2} y={p.y - ux} fontSize={ux * 3} fill={article.color} stroke="#ffffff" strokeWidth={ux * 0.5} paintOrder="stroke">
                             {el.label}

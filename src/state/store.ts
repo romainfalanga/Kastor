@@ -6,6 +6,7 @@ import { metersPerPdfPoint } from "../../shared/geometry";
 import type { ArticleDef, Calibration, Layer, LayerElement, PageOverview, Pt } from "../../shared/types";
 import {
   dedupeUnitElements,
+  deriveJunctions,
   detectScaleDenominator,
   findSeeds,
   mergeSeedsWithElements,
@@ -13,6 +14,7 @@ import {
 } from "../../shared/vector";
 import { analyzeLayer, analyzeOverview } from "../services/api";
 import { fileToPages } from "../services/pdf";
+import { extractRasterData } from "../services/raster";
 import * as storage from "../services/storage";
 import { findLayer, type Project, type ProjectPage } from "./model";
 
@@ -24,10 +26,39 @@ const SEED_MATCH_TOL = 18;
 const DEDUPE_TOL = 8;
 
 export interface AnalysisProgress {
-  stage: "overview" | "layers";
+  stage: "import" | "overview" | "layers";
   label: string;
   done: number;
   total: number;
+}
+
+/** Analyses de calques menées en parallèle (limite douce pour OpenRouter). */
+const LAYER_CONCURRENCY = 3;
+
+// Sauvegarde locale différée : les mutations rapprochées (déplacement de
+// points…) ne déclenchent qu'une seule écriture IndexedDB.
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSave: Project | null = null;
+
+function scheduleSave(project: Project): void {
+  pendingSave = project;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    if (pendingSave) void storage.saveProject(pendingSave);
+    pendingSave = null;
+    saveTimer = null;
+  }, 600);
+}
+
+function flushSave(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (pendingSave) {
+    void storage.saveProject(pendingSave);
+    pendingSave = null;
+  }
 }
 
 interface KastorState {
@@ -57,6 +88,8 @@ interface KastorState {
   runLayer: (pageId: string, articleId: string) => Promise<void>;
   /** Passe de vérification : le sous-agent critique les éléments actuels du calque. */
   verifyLayer: (pageId: string, articleId: string) => Promise<void>;
+  /** Jonctions déduites algorithmiquement du réseau linéaire (sf → jonction_angle, ch → jonction_ch). */
+  deriveJunctionLayer: (pageId: string, junctionArticleId: string) => void;
 
   addElement: (pageId: string, articleId: string, points: Pt[], label?: string) => void;
   updateElementPoints: (pageId: string, articleId: string, elementId: string, points: Pt[]) => void;
@@ -70,7 +103,7 @@ function touch(project: Project): Project {
 }
 
 export const useKastor = create<KastorState>((set, get) => {
-  /** Applique une mutation au projet courant, la persiste et met à jour la liste. */
+  /** Applique une mutation au projet courant, la persiste (différé) et met à jour la liste. */
   function mutate(fn: (p: Project) => Project): void {
     const current = get().current;
     if (!current) return;
@@ -79,7 +112,7 @@ export const useKastor = create<KastorState>((set, get) => {
       current: next,
       projects: get().projects.map((p) => (p.id === next.id ? next : p)),
     });
-    void storage.saveProject(next);
+    scheduleSave(next);
   }
 
   function mutateLayer(pageId: string, articleId: string, fn: (l: Layer) => Layer): void {
@@ -126,9 +159,9 @@ export const useKastor = create<KastorState>((set, get) => {
     const page = current.pages.find((pg) => pg.id === pageId);
     if (!page) return;
 
-    for (const articleId of articleIds) {
+    const analyzeOneArticle = async (articleId: string): Promise<void> => {
       const article = getArticle(articleId);
-      if (!article) continue;
+      if (!article) return;
       const prog = get().progress;
       if (prog) {
         set({ progress: { ...prog, label: `${page.name} — ${article.label}` } });
@@ -161,7 +194,18 @@ export const useKastor = create<KastorState>((set, get) => {
       }
       const p2 = get().progress;
       if (p2) set({ progress: { ...p2, done: p2.done + 1 } });
-    }
+    };
+
+    // Pool de sous-agents en parallèle (borné pour ménager l'API).
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(LAYER_CONCURRENCY, articleIds.length) }, async () => {
+        while (next < articleIds.length) {
+          const id = articleIds[next++];
+          await analyzeOneArticle(id);
+        }
+      }),
+    );
   }
 
   return {
@@ -190,13 +234,22 @@ export const useKastor = create<KastorState>((set, get) => {
     },
 
     openProject: (id) => {
+      flushSave();
       const project = get().projects.find((p) => p.id === id) ?? null;
       set({ current: project, error: null });
     },
 
-    closeProject: () => set({ current: null, error: null }),
+    closeProject: () => {
+      flushSave();
+      set({ current: null, error: null });
+    },
 
     removeProject: async (id) => {
+      if (pendingSave?.id === id) {
+        pendingSave = null;
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = null;
+      }
       await storage.deleteProject(id);
       set({
         projects: get().projects.filter((p) => p.id !== id),
@@ -212,9 +265,32 @@ export const useKastor = create<KastorState>((set, get) => {
         for (const file of files) {
           const rendered = await fileToPages(file);
           for (const r of rendered) {
+            // Voie automatique optimale : si le document n'a pas (ou peu) de
+            // contenu vectoriel natif (scan, photo, PDF scanné), on le
+            // VECTORISE : détection de lignes par contours + OCR des repères.
+            let vectorText = r.vectorText;
+            let vectorLines = r.vectorLines;
+            const needOcr = vectorText.length < 5;
+            const needLines = vectorLines.length < 30;
+            if (needOcr || needLines) {
+              set({
+                progress: {
+                  stage: "import",
+                  label: `Vectorisation de ${r.name}${needOcr ? " (OCR des repères en cours, ~10-30 s)" : ""}…`,
+                  done: 0,
+                  total: 1,
+                },
+              });
+              const enriched = await extractRasterData(r.imageDataUrl, {
+                lines: needLines,
+                ocr: needOcr,
+              });
+              if (needLines) vectorLines = [...vectorLines, ...enriched.lines];
+              if (needOcr) vectorText = [...vectorText, ...enriched.text];
+            }
             // Calibration exacte immédiate si le PDF est vectoriel et que
             // l'échelle nominale est lisible dans son texte (ex. « 1/50 »).
-            const denom = detectScaleDenominator(r.vectorText);
+            const denom = detectScaleDenominator(vectorText);
             const calibration: Calibration | null =
               denom && r.renderScale
                 ? {
@@ -231,8 +307,8 @@ export const useKastor = create<KastorState>((set, get) => {
               width: r.width,
               height: r.height,
               renderScale: r.renderScale,
-              vectorText: r.vectorText,
-              vectorLines: r.vectorLines,
+              vectorText,
+              vectorLines,
               levelId: null,
               calibration,
             };
@@ -242,7 +318,7 @@ export const useKastor = create<KastorState>((set, get) => {
       } catch (err) {
         set({ error: err instanceof Error ? err.message : String(err) });
       } finally {
-        set({ busy: false });
+        set({ busy: false, progress: null });
       }
     },
 
@@ -350,6 +426,39 @@ export const useKastor = create<KastorState>((set, get) => {
       }
     },
 
+    deriveJunctionLayer: (pageId, junctionArticleId) => {
+      const { current } = get();
+      const page = current?.pages.find((pg) => pg.id === pageId);
+      if (!current || !page) return;
+      const sourceArticleId = junctionArticleId === "jonction_ch" ? "ch" : "sf";
+      const sourceArticle = getArticle(sourceArticleId);
+      const sourceLayer = findLayer(current, pageId, sourceArticleId);
+      if (!sourceArticle || !sourceLayer || sourceLayer.elements.length === 0) {
+        set({
+          error: `Analysez (ou tracez) d'abord le calque « ${sourceArticle?.label ?? sourceArticleId} » sur cette page : les jonctions en sont déduites algorithmiquement.`,
+        });
+        return;
+      }
+      const polylines = sourceLayer.elements
+        .map((el) => el.points)
+        .filter((pts) => pts.length >= 2);
+      const nodes = deriveJunctions(polylines);
+      const existingLayer = findLayer(current, pageId, junctionArticleId);
+      const manual = (existingLayer?.elements ?? []).filter((e) => e.source === "manuel");
+      const derived: LayerElement[] = nodes.map((pt) => ({
+        id: crypto.randomUUID(),
+        points: [pt],
+        source: "vecteur",
+      }));
+      mutateLayer(pageId, junctionArticleId, (l) => ({
+        ...l,
+        elements: dedupeUnitElements([...manual, ...derived], DEDUPE_TOL),
+        status: "done",
+        error: undefined,
+        notes: `${nodes.length} jonction(s) déduites algorithmiquement du réseau « ${sourceArticle.label} » (angles, T, croisements) — recalculées à la demande via ⚙.`,
+      }));
+    },
+
     verifyLayer: async (pageId, articleId) => {
       const { current } = get();
       const page = current?.pages.find((pg) => pg.id === pageId);
@@ -436,7 +545,11 @@ export const useKastor = create<KastorState>((set, get) => {
       if (get().error) return;
       const project = get().current;
       if (!project) return;
-      const perPage = project.pages.map((pg) => ({ pageId: pg.id, articleIds: articlesToAnalyze(pg) }));
+      // Seules les pages rattachées à un niveau sont décortiquées : les coupes,
+      // détails et nomenclatures (non rattachés) ne déclenchent pas d'appels inutiles.
+      const perPage = project.pages
+        .filter((pg) => pg.levelId !== null)
+        .map((pg) => ({ pageId: pg.id, articleIds: articlesToAnalyze(pg) }));
       const total = perPage.reduce((acc, p) => acc + p.articleIds.length, 0);
       set({ busy: true, progress: { stage: "layers", label: "Analyse des calques…", done: 0, total } });
       try {

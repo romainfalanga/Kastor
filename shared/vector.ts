@@ -127,6 +127,99 @@ export function snapPolyline(points: Pt[], lines: VectorLine[], tol: number): Pt
 }
 
 // ---------------------------------------------------------------------------
+// Jonctions déduites algorithmiquement du réseau linéaire
+// ---------------------------------------------------------------------------
+
+interface Seg {
+  a: Pt;
+  b: Pt;
+  owner: number;
+}
+
+/**
+ * Déduit les JONCTIONS d'un réseau de polylignes (semelles filantes, chaînages)
+ * de façon purement algorithmique — zéro IA, zéro erreur d'interprétation :
+ * - angles : sommet intérieur d'une polyligne dont la direction change (L) ;
+ * - raccords en T / bout-à-bout : extrémité d'une polyligne qui touche une
+ *   autre polyligne ;
+ * - croisements : intersection franche entre segments de polylignes distinctes.
+ */
+export function deriveJunctions(polylines: Pt[][], tol = 8): Pt[] {
+  const nodes: Pt[] = [];
+  const segs: Seg[] = [];
+  polylines.forEach((pl, owner) => {
+    for (let i = 1; i < pl.length; i++) segs.push({ a: pl[i - 1], b: pl[i], owner });
+  });
+
+  // 1. Angles internes (changement de direction >= 25°).
+  for (const pl of polylines) {
+    for (let i = 1; i < pl.length - 1; i++) {
+      if (directionChangeDeg(pl[i - 1], pl[i], pl[i + 1]) >= 25) nodes.push(pl[i]);
+    }
+  }
+
+  // 2. Extrémités touchant une autre polyligne (T et raccords).
+  polylines.forEach((pl, owner) => {
+    if (pl.length === 0) return;
+    for (const end of [pl[0], pl[pl.length - 1]]) {
+      for (const seg of segs) {
+        if (seg.owner === owner) continue;
+        const { pt, dist } = projectPointOnSeg(end, seg);
+        if (dist <= tol) {
+          nodes.push(pt);
+          break;
+        }
+      }
+    }
+  });
+
+  // 3. Croisements francs entre polylignes distinctes.
+  for (let i = 0; i < segs.length; i++) {
+    for (let j = i + 1; j < segs.length; j++) {
+      if (segs[i].owner === segs[j].owner) continue;
+      const x = segmentIntersection(segs[i], segs[j]);
+      if (x) nodes.push(x);
+    }
+  }
+
+  // Dédoublonnage des nœuds confondus.
+  const out: Pt[] = [];
+  for (const n of nodes) {
+    if (!out.some((o) => Math.hypot(o.x - n.x, o.y - n.y) < tol * 1.2)) out.push(n);
+  }
+  return out;
+}
+
+function directionChangeDeg(a: Pt, b: Pt, c: Pt): number {
+  const u = { x: b.x - a.x, y: b.y - a.y };
+  const v = { x: c.x - b.x, y: c.y - b.y };
+  const lu = Math.hypot(u.x, u.y);
+  const lv = Math.hypot(v.x, v.y);
+  if (lu === 0 || lv === 0) return 0;
+  const cos = Math.max(-1, Math.min(1, (u.x * v.x + u.y * v.y) / (lu * lv)));
+  return (Math.acos(cos) * 180) / Math.PI;
+}
+
+function projectPointOnSeg(p: Pt, s: Seg): { pt: Pt; dist: number } {
+  return projectOnSegment(p, { x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y });
+}
+
+/** Intersection franche (hors extrémités) de deux segments, ou null. */
+function segmentIntersection(s1: Seg, s2: Seg): Pt | null {
+  const d1x = s1.b.x - s1.a.x;
+  const d1y = s1.b.y - s1.a.y;
+  const d2x = s2.b.x - s2.a.x;
+  const d2y = s2.b.y - s2.a.y;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = ((s2.a.x - s1.a.x) * d2y - (s2.a.y - s1.a.y) * d2x) / denom;
+  const u = ((s2.a.x - s1.a.x) * d1y - (s2.a.y - s1.a.y) * d1x) / denom;
+  const margin = 0.02;
+  if (t < margin || t > 1 - margin || u < margin || u > 1 - margin) return null;
+  return { x: s1.a.x + t * d1x, y: s1.a.y + t * d1y };
+}
+
+// ---------------------------------------------------------------------------
 // Fusion ancres + détections IA, et dédoublonnage
 // ---------------------------------------------------------------------------
 

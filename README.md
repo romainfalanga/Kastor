@@ -104,8 +104,19 @@ les exploite en amont et en aval de l'IA (`shared/vector.ts`,
 - **Passe de vérification** (bouton ✓ par calque) : le sous-agent critique les
   éléments retenus (ajoute les manqués, retire les faux) ; les corrections
   manuelles sont toujours préservées.
+- **Vectorisation des scans et photos** (`src/services/raster.ts`) : un
+  document sans contenu vectoriel natif (scan, photo, PDF scanné) est
+  automatiquement vectorisé à l'import — détection de segments par contours
+  (tolérante aux traits interrompus) + OCR des repères (tesseract.js). Les
+  ancres et l'accrochage fonctionnent alors aussi sur les scans, avec une
+  fiabilité moindre qu'un PDF vectoriel natif (qui reste à privilégier).
+- **Jonctions 100 % algorithmiques** (bouton ⚙) : les jonctions d'angle et de
+  chaînage sont déduites mathématiquement du réseau linéaire (angles, T,
+  croisements des semelles filantes / chaînages) — aucune IA impliquée.
 - **Aucune limite de pages** : l'analyse générale découpe automatiquement le
   dossier en lots d'appels modèle.
+- **Robustesse et vitesse** : retries avec backoff sur les appels OpenRouter,
+  sous-agents exécutés en parallèle (3 à la fois), sauvegarde locale différée.
 
 ## Notes de conception
 

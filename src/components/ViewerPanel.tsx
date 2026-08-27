@@ -21,6 +21,7 @@ export default function ViewerPanel() {
     busy,
     runLayer,
     verifyLayer,
+    deriveJunctionLayer,
     addElement,
     updateElementPoints,
     deleteElement,
@@ -197,6 +198,16 @@ export default function ViewerPanel() {
                 >
                   ✓
                 </button>
+                {(a.id === "jonction_angle" || a.id === "jonction_ch") && (
+                  <button
+                    className="ghost small-btn"
+                    disabled={busy}
+                    title={`Déduction algorithmique (sans IA) : les jonctions sont les nœuds du réseau « ${a.id === "jonction_ch" ? "Chaînages" : "Semelles filantes"} » (angles, T, croisements).`}
+                    onClick={() => deriveJunctionLayer(page.id, a.id)}
+                  >
+                    ⚙
+                  </button>
+                )}
               </li>
             );
           })}

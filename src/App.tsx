@@ -48,7 +48,11 @@ export default function App() {
         <div className="progress-banner">
           <div className="spinner" />
           <span>
-            {progress.stage === "overview" ? "Agent d'analyse générale : " : "Sous-agents de calque : "}
+            {progress.stage === "import"
+              ? "Import et vectorisation : "
+              : progress.stage === "overview"
+                ? "Agent d'analyse générale : "
+                : "Sous-agents de calque : "}
             {progress.label}
             {progress.total > 1 ? ` (${progress.done}/${progress.total})` : ""}
           </span>
