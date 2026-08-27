@@ -15,6 +15,9 @@
     // Modèle multimodal OpenRouter par défaut (modifiable aussi depuis l'interface).
     "OPENROUTER_MODEL": "google/gemini-2.5-pro"
   },
+  // Préserve les variables ajoutées via le dashboard (dont OPENROUTER_API_KEY)
+  // lors des déploiements wrangler — sans quoi elles seraient supprimées.
+  "keep_vars": true,
   "observability": {
     "enabled": true
   }

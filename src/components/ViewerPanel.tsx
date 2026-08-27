@@ -1,20 +1,31 @@
 import { useMemo, useState } from "react";
 import { articlesForLevel, getLevel, unitLabel } from "../../shared/catalog";
 import { formatQuantity, layerQuantity } from "../../shared/geometry";
-import type { Pt } from "../../shared/types";
-import { findLayer } from "../state/model";
+import type { Calibration, Pt } from "../../shared/types";
+import { findLayer, type ProjectPage } from "../state/model";
 import { useKastor } from "../state/store";
 import PlanViewer, { type ViewerTool } from "./PlanViewer";
+
+function calibrationLabel(page: ProjectPage): string {
+  const cal: Calibration | null = page.calibration;
+  if (!cal) return "non calibrée — les métrés en mL resteront vides";
+  if (cal.kind === "scale") {
+    return `1/${cal.denominator} — exacte, issue du PDF vectoriel (${cal.source === "auto" ? "détectée automatiquement" : "définie manuellement"})`;
+  }
+  return `cote de référence de ${cal.meters} m (${cal.source === "ia" ? "repérée par l'IA — à vérifier" : "calibrée manuellement"})`;
+}
 
 export default function ViewerPanel() {
   const {
     current,
     busy,
     runLayer,
+    verifyLayer,
     addElement,
     updateElementPoints,
     deleteElement,
     setCalibration,
+    setPageScale,
   } = useKastor();
   const [pageId, setPageId] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -84,11 +95,42 @@ export default function ViewerPanel() {
         <p className="muted small">
           Niveau : {getLevel(page.levelId)?.label ?? "non rattaché"}
           <br />
-          Échelle :{" "}
-          {page.calibration
-            ? `calibrée (${page.calibration.meters} m de référence, ${page.calibration.source})`
-            : "non calibrée — les métrés en mL resteront vides"}
+          Calibration : {calibrationLabel(page)}
+          {(page.vectorText?.length ?? 0) > 0 && (
+            <>
+              <br />
+              PDF vectoriel : {page.vectorText?.length ?? 0} textes,{" "}
+              {page.vectorLines?.length ?? 0} lignes extraits (ancrage &amp; accrochage actifs)
+            </>
+          )}
         </p>
+
+        {page.renderScale && (
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const input = (e.currentTarget.elements.namedItem("denom") as HTMLInputElement).value;
+              const d = Number(input);
+              if (Number.isFinite(d) && d > 0) setPageScale(page.id, d);
+            }}
+          >
+            <label className="small">Échelle 1/</label>
+            <input
+              name="denom"
+              type="number"
+              min={1}
+              max={1000}
+              style={{ width: 70 }}
+              defaultValue={
+                page.calibration?.kind === "scale" ? page.calibration.denominator : 50
+              }
+            />
+            <button type="submit" className="small-btn" title="Calibration exacte par l'échelle nominale du PDF">
+              Appliquer
+            </button>
+          </form>
+        )}
 
         <div className="row toolbar">
           {toolButtons.map((t) => (
@@ -146,6 +188,14 @@ export default function ViewerPanel() {
                   onClick={() => void runLayer(page.id, a.id)}
                 >
                   ↻
+                </button>
+                <button
+                  className="ghost small-btn"
+                  disabled={busy || !layer || layer.elements.length === 0}
+                  title={`Passe de vérification : le sous-agent critique les éléments actuels (ajoute les manqués, retire les faux). Vos corrections manuelles sont préservées.`}
+                  onClick={() => void verifyLayer(page.id, a.id)}
+                >
+                  ✓
                 </button>
               </li>
             );

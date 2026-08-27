@@ -3,7 +3,7 @@
 // et des bonnes pratiques de lecture de plans béton armé (voir docs/METHODOLOGIE.md).
 
 import { ARTICLES, LEVELS, unitLabel } from "../shared/catalog";
-import type { ArticleDef } from "../shared/types";
+import type { ArticleDef, Pt, Seed } from "../shared/types";
 
 const COORD_CONVENTION = `CONVENTION DE COORDONNÉES (obligatoire) :
 - Chaque point est exprimé en coordonnées normalisées de 0 à 1000 sur l'image fournie.
@@ -129,6 +129,9 @@ export function layerUserPrompt(
   article: ArticleDef,
   levelLabel: string | null,
   context: string | undefined,
+  seeds: Seed[] | undefined,
+  mode: "detect" | "verify",
+  existing: { label?: string; points: Pt[] }[] | undefined,
 ): string {
   const parts: string[] = [];
   parts.push(
@@ -137,8 +140,30 @@ export function layerUserPrompt(
   if (context) {
     parts.push(`Contexte transmis par l'agent d'analyse générale :\n${context}`);
   }
-  parts.push(
-    `Détecte et vectorise toutes les occurrences de « ${article.label} » selon les règles, puis réponds en JSON.`,
-  );
+  if (seeds && seeds.length > 0) {
+    parts.push(
+      `ANCRES VECTORIELLES — repères textuels extraits du contenu vectoriel du PDF (positions EXACTES et fiables, mêmes coordonnées 0-1000) :\n` +
+        seeds
+          .map((s) => `- « ${s.label} » à (x=${Math.round(s.x)}, y=${Math.round(s.y)})`)
+          .join("\n") +
+        `\nChaque ancre correspond presque certainement à une occurrence de cet article à proximité immédiate de sa position (le repère est écrit à côté de l'élément). Utilise-les pour ne rien manquer et pour placer précisément tes détections — mais cherche AUSSI les occurrences sans repère écrit.`,
+    );
+  }
+  if (mode === "verify" && existing) {
+    parts.push(
+      `PASSE DE VÉRIFICATION. Voici les éléments actuellement retenus pour ce calque :\n` +
+        JSON.stringify(
+          existing.map((e) => ({
+            label: e.label,
+            points: e.points.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+          })),
+        ) +
+        `\nCritique cette liste en la confrontant à l'image : AJOUTE les occurrences manquées, RETIRE les faux positifs (éléments qui ne sont pas des « ${article.label} »), CORRIGE les positions manifestement inexactes. Réponds avec la LISTE COMPLÈTE corrigée au format JSON habituel (elle remplace l'ancienne).`,
+    );
+  } else {
+    parts.push(
+      `Détecte et vectorise toutes les occurrences de « ${article.label} » selon les règles, puis réponds en JSON.`,
+    );
+  }
   return parts.join("\n\n");
 }

@@ -29,7 +29,9 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
-const MAX_PAGES_PER_OVERVIEW = 12;
+// Nombre de pages max par APPEL MODÈLE (pas par dossier : le client découpe
+// automatiquement les grands dossiers en lots — aucune limite globale).
+const PAGES_PER_MODEL_CALL = 8;
 
 app.get("/api/health", (c) =>
   c.json({
@@ -44,9 +46,11 @@ app.post("/api/analyze/overview", async (c) => {
   if (!body || !Array.isArray(body.pages) || body.pages.length === 0) {
     return c.json({ error: "Requête invalide : liste de pages attendue." }, 400);
   }
-  if (body.pages.length > MAX_PAGES_PER_OVERVIEW) {
+  if (body.pages.length > PAGES_PER_MODEL_CALL) {
     return c.json(
-      { error: `Trop de pages (${body.pages.length}) : maximum ${MAX_PAGES_PER_OVERVIEW} par analyse.` },
+      {
+        error: `Trop de pages pour un seul appel modèle (${body.pages.length} > ${PAGES_PER_MODEL_CALL}) : le client doit envoyer par lots.`,
+      },
       400,
     );
   }
@@ -91,13 +95,23 @@ app.post("/api/analyze/layer", async (c) => {
   if (!article) {
     return c.json({ error: `Article inconnu : ${body.articleId}` }, 400);
   }
+  const mode = body.mode === "verify" ? "verify" : "detect";
+  const seeds = sanitizeSeeds(body.seeds);
+  const existing = sanitizeExisting(body.existing);
 
   try {
     const raw = await callVisionModel(
       c.env,
       body.model,
       layerSystemPrompt(article),
-      layerUserPrompt(article, getLevel(body.levelId)?.label ?? null, body.context),
+      layerUserPrompt(
+        article,
+        getLevel(body.levelId)?.label ?? null,
+        body.context,
+        seeds,
+        mode,
+        existing,
+      ),
       [body.imageDataUrl],
     );
     const parsed = extractJson<{ elements?: unknown; notes?: string }>(raw);
@@ -117,6 +131,37 @@ app.post("/api/analyze/layer", async (c) => {
 // ---------------------------------------------------------------------------
 // Validation / nettoyage des sorties de modèle
 // ---------------------------------------------------------------------------
+
+function sanitizeSeeds(value: unknown): { label: string; x: number; y: number }[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: { label: string; x: number; y: number }[] = [];
+  for (const item of value.slice(0, 300)) {
+    if (typeof item !== "object" || item === null) continue;
+    const s = item as { label?: unknown; x?: unknown; y?: unknown };
+    const pt = toPt({ x: s.x, y: s.y });
+    if (!pt || typeof s.label !== "string" || !s.label.trim()) continue;
+    out.push({ label: s.label.trim().slice(0, 20), x: pt.x, y: pt.y });
+  }
+  return out.length ? out : undefined;
+}
+
+function sanitizeExisting(value: unknown): { label?: string; points: Pt[] }[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: { label?: string; points: Pt[] }[] = [];
+  for (const item of value.slice(0, 500)) {
+    if (typeof item !== "object" || item === null) continue;
+    const e = item as { label?: unknown; points?: unknown };
+    const points = Array.isArray(e.points)
+      ? e.points.map(toPt).filter((p): p is Pt => p !== null)
+      : [];
+    if (points.length === 0) continue;
+    out.push({
+      label: typeof e.label === "string" && e.label.trim() ? e.label.trim().slice(0, 20) : undefined,
+      points,
+    });
+  }
+  return out.length ? out : undefined;
+}
 
 function toPt(value: unknown): Pt | null {
   if (typeof value !== "object" || value === null) return null;

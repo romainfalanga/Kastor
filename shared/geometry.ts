@@ -31,12 +31,21 @@ export function polylineLengthPx(points: Pt[], dims: PageDims): number {
   return total;
 }
 
+/** Mètres par point PDF pour une échelle nominale 1/D : 1 pt = 1/72 pouce réel × D. */
+export function metersPerPdfPoint(denominator: number): number {
+  return (0.0254 / 72) * denominator;
+}
+
 /**
- * Facteur mètres/pixel issu de la calibration de la page
- * (deux points de l'image dont la distance réelle est connue).
+ * Facteur mètres/pixel issu de la calibration de la page :
+ * - mode "scale"   : valeur exacte précalculée depuis l'échelle nominale du PDF ;
+ * - mode "segment" : distance réelle connue entre deux points de l'image.
  * Retourne null si la calibration est dégénérée.
  */
 export function metersPerPx(cal: Calibration, dims: PageDims): number | null {
+  if (cal.kind === "scale") {
+    return cal.metersPerPx > 0 ? cal.metersPerPx : null;
+  }
   const d = distPx(cal.a, cal.b, dims);
   if (d <= 0 || cal.meters <= 0) return null;
   return cal.meters / d;

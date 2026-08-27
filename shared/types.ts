@@ -41,7 +41,8 @@ export interface LayerElement {
    * >= 2 points (polyligne) pour un article métré en ml.
    */
   points: Pt[];
-  source: "ia" | "manuel";
+  /** "vecteur" : élément issu d'un repère textuel extrait du PDF (déterministe). */
+  source: "ia" | "manuel" | "vecteur";
 }
 
 export type LayerStatus = "pending" | "running" | "done" | "error";
@@ -65,12 +66,50 @@ export interface ScaleHint {
   description?: string;
 }
 
-/** Calibration retenue pour une page : deux points de l'image et la distance réelle. */
-export interface Calibration {
-  a: Pt;
-  b: Pt;
-  meters: number;
-  source: "ia" | "manuel";
+/**
+ * Calibration d'échelle d'une page. Deux modes :
+ * - "segment" : deux points de l'image dont la distance réelle est connue (cote) ;
+ * - "scale"   : échelle nominale d'un PDF vectoriel (1/denominator). Le PDF ayant
+ *   des dimensions physiques exactes (1 pt = 1/72 pouce), metersPerPx est calculé
+ *   mathématiquement — aucune erreur possible tant que le PDF est à l'échelle.
+ */
+export type Calibration =
+  | {
+      kind?: "segment";
+      a: Pt;
+      b: Pt;
+      meters: number;
+      source: "ia" | "manuel";
+    }
+  | {
+      kind: "scale";
+      /** Dénominateur de l'échelle, ex. 50 pour 1/50. */
+      denominator: number;
+      /** Mètres réels par pixel de l'image rendue (précalculé, exact). */
+      metersPerPx: number;
+      source: "auto" | "manuel";
+    };
+
+/** Texte extrait du contenu vectoriel d'un PDF, position normalisée 0..1000. */
+export interface VectorTextItem {
+  text: string;
+  x: number;
+  y: number;
+}
+
+/** Segment de ligne extrait du contenu vectoriel d'un PDF, normalisé 0..1000. */
+export interface VectorLine {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Ancre déterministe : repère textuel trouvé dans le contenu vectoriel. */
+export interface Seed {
+  label: string;
+  x: number;
+  y: number;
 }
 
 export interface PageOverview {
@@ -110,6 +149,16 @@ export interface AnalyzeLayerRequest {
   levelId: string | null;
   /** Contexte issu de l'orchestrateur : légende, échelle, remarques. */
   context?: string;
+  /** Ancres déterministes : repères de cet article extraits du texte vectoriel du PDF. */
+  seeds?: Seed[];
+  /**
+   * "detect" (défaut) : détection complète.
+   * "verify" : passe de vérification — le modèle critique les éléments existants
+   * (ajoute les manqués, retire les faux, corrige les positions).
+   */
+  mode?: "detect" | "verify";
+  /** Éléments actuels du calque, pour le mode "verify". */
+  existing?: { label?: string; points: Pt[] }[];
   model?: string;
 }
 

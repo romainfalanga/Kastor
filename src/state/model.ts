@@ -1,6 +1,6 @@
 // Modèle de données du frontend : un projet = un dossier de plans.
 
-import type { Calibration, Layer, PageOverview } from "../../shared/types";
+import type { Calibration, Layer, PageOverview, VectorLine, VectorTextItem } from "../../shared/types";
 
 export interface ProjectPage {
   id: string;
@@ -10,6 +10,11 @@ export interface ProjectPage {
   imageDataUrl: string;
   width: number;
   height: number;
+  /** Pixels par point PDF — présent si la page vient d'un PDF (calibration exacte possible). */
+  renderScale?: number;
+  /** Contenu vectoriel extrait du PDF (absent pour les images et anciens projets). */
+  vectorText?: VectorTextItem[];
+  vectorLines?: VectorLine[];
   /** Niveau du bâtiment auquel la page est rattachée (modifiable par l'utilisateur). */
   levelId: string | null;
   /** Résultat de l'agent orchestrateur pour cette page. */

@@ -2,11 +2,26 @@
 
 import { create } from "zustand";
 import { articlesForLevel, getArticle } from "../../shared/catalog";
-import type { Calibration, Layer, LayerElement, Pt } from "../../shared/types";
+import { metersPerPdfPoint } from "../../shared/geometry";
+import type { ArticleDef, Calibration, Layer, LayerElement, PageOverview, Pt } from "../../shared/types";
+import {
+  dedupeUnitElements,
+  detectScaleDenominator,
+  findSeeds,
+  mergeSeedsWithElements,
+  snapPolyline,
+} from "../../shared/vector";
 import { analyzeLayer, analyzeOverview } from "../services/api";
 import { fileToPages } from "../services/pdf";
 import * as storage from "../services/storage";
 import { findLayer, type Project, type ProjectPage } from "./model";
+
+/** Pages par appel modèle pour l'analyse générale (le dossier lui-même n'a pas de limite). */
+const OVERVIEW_BATCH_SIZE = 8;
+/** Tolérances (coordonnées normalisées 0..1000). */
+const SNAP_TOL = 6;
+const SEED_MATCH_TOL = 18;
+const DEDUPE_TOL = 8;
 
 export interface AnalysisProgress {
   stage: "overview" | "layers";
@@ -33,11 +48,15 @@ interface KastorState {
   removePage: (pageId: string) => void;
   setPageLevel: (pageId: string, levelId: string | null) => void;
   setCalibration: (pageId: string, cal: Calibration | null) => void;
+  /** Calibration exacte par échelle nominale (PDF vectoriels uniquement). */
+  setPageScale: (pageId: string, denominator: number) => void;
 
   runFullAnalysis: () => Promise<void>;
   runOverview: () => Promise<void>;
   runLayersForPage: (pageId: string) => Promise<void>;
   runLayer: (pageId: string, articleId: string) => Promise<void>;
+  /** Passe de vérification : le sous-agent critique les éléments actuels du calque. */
+  verifyLayer: (pageId: string, articleId: string) => Promise<void>;
 
   addElement: (pageId: string, articleId: string, points: Pt[], label?: string) => void;
   updateElementPoints: (pageId: string, articleId: string, elementId: string, points: Pt[]) => void;
@@ -74,6 +93,33 @@ export const useKastor = create<KastorState>((set, get) => {
     });
   }
 
+  /**
+   * Raffinage déterministe des détections d'un calque :
+   * - polylignes (ml) accrochées aux lignes vectorielles exactes du PDF ;
+   * - ancres textuelles (repères) fusionnées : label exact récupéré, repère
+   *   sans détection ajouté comme élément (le plan fait foi) ;
+   * - dédoublonnage des éléments ponctuels.
+   */
+  function refineElements(
+    article: ArticleDef,
+    page: ProjectPage,
+    elements: LayerElement[],
+  ): LayerElement[] {
+    let els = elements;
+    const lines = page.vectorLines ?? [];
+    if (article.unit === "ml" && lines.length > 0) {
+      els = els.map((el) =>
+        el.source === "ia" ? { ...el, points: snapPolyline(el.points, lines, SNAP_TOL) } : el,
+      );
+    }
+    if (article.unit === "u") {
+      const seeds = findSeeds(article, page.vectorText ?? []);
+      els = mergeSeedsWithElements("u", els, seeds, SEED_MATCH_TOL);
+      els = dedupeUnitElements(els, DEDUPE_TOL);
+    }
+    return els;
+  }
+
   async function analyzeOnePage(pageId: string, articleIds: string[]): Promise<void> {
     const { current } = get();
     if (!current) return;
@@ -89,17 +135,19 @@ export const useKastor = create<KastorState>((set, get) => {
       }
       mutateLayer(pageId, articleId, (l) => ({ ...l, status: "running", error: undefined }));
       try {
+        const seeds = findSeeds(article, page.vectorText ?? []);
         const res = await analyzeLayer({
           pageId,
           imageDataUrl: page.imageDataUrl,
           articleId,
           levelId: page.levelId,
           context: buildContext(page),
+          seeds: seeds.length ? seeds : undefined,
           model: get().current?.model,
         });
         mutateLayer(pageId, articleId, (l) => ({
           ...l,
-          elements: res.elements,
+          elements: refineElements(article, page, res.elements),
           notes: res.notes,
           status: "done",
           error: undefined,
@@ -164,14 +212,29 @@ export const useKastor = create<KastorState>((set, get) => {
         for (const file of files) {
           const rendered = await fileToPages(file);
           for (const r of rendered) {
+            // Calibration exacte immédiate si le PDF est vectoriel et que
+            // l'échelle nominale est lisible dans son texte (ex. « 1/50 »).
+            const denom = detectScaleDenominator(r.vectorText);
+            const calibration: Calibration | null =
+              denom && r.renderScale
+                ? {
+                    kind: "scale",
+                    denominator: denom,
+                    metersPerPx: metersPerPdfPoint(denom) / r.renderScale,
+                    source: "auto",
+                  }
+                : null;
             const page: ProjectPage = {
               id: crypto.randomUUID(),
               name: r.name,
               imageDataUrl: r.imageDataUrl,
               width: r.width,
               height: r.height,
+              renderScale: r.renderScale,
+              vectorText: r.vectorText,
+              vectorLines: r.vectorLines,
               levelId: null,
-              calibration: null,
+              calibration,
             };
             mutate((p) => ({ ...p, pages: [...p.pages, page] }));
           }
@@ -202,45 +265,139 @@ export const useKastor = create<KastorState>((set, get) => {
         pages: p.pages.map((pg) => (pg.id === pageId ? { ...pg, calibration: cal } : pg)),
       })),
 
+    setPageScale: (pageId, denominator) =>
+      mutate((p) => ({
+        ...p,
+        pages: p.pages.map((pg) => {
+          if (pg.id !== pageId || !pg.renderScale || denominator <= 0) return pg;
+          return {
+            ...pg,
+            calibration: {
+              kind: "scale",
+              denominator,
+              metersPerPx: metersPerPdfPoint(denominator) / pg.renderScale,
+              source: "manuel",
+            },
+          };
+        }),
+      })),
+
     runOverview: async () => {
       const { current } = get();
       if (!current || current.pages.length === 0) return;
+      // Découpage automatique en lots : aucun plafond sur la taille du dossier.
+      const batches: ProjectPage[][] = [];
+      for (let i = 0; i < current.pages.length; i += OVERVIEW_BATCH_SIZE) {
+        batches.push(current.pages.slice(i, i + OVERVIEW_BATCH_SIZE));
+      }
       set({
         busy: true,
         error: null,
-        progress: { stage: "overview", label: "Analyse générale du dossier…", done: 0, total: 1 },
+        progress: {
+          stage: "overview",
+          label: "Analyse générale du dossier…",
+          done: 0,
+          total: batches.length,
+        },
       });
       try {
-        const res = await analyzeOverview({
-          pages: current.pages.map((p) => ({
-            pageId: p.id,
-            name: p.name,
-            imageDataUrl: p.imageDataUrl,
-          })),
-          model: current.model,
-        });
+        const overviews: PageOverview[] = [];
+        const remarks: string[] = [];
+        for (let i = 0; i < batches.length; i++) {
+          if (batches.length > 1) {
+            set({
+              progress: {
+                stage: "overview",
+                label: `Analyse générale — lot ${i + 1}/${batches.length}`,
+                done: i,
+                total: batches.length,
+              },
+            });
+          }
+          const res = await analyzeOverview({
+            pages: batches[i].map((p) => ({
+              pageId: p.id,
+              name: p.name,
+              imageDataUrl: p.imageDataUrl,
+            })),
+            model: current.model,
+          });
+          overviews.push(...res.pages);
+          if (res.globalRemarks) remarks.push(res.globalRemarks);
+        }
         mutate((p) => ({
           ...p,
-          globalRemarks: res.globalRemarks,
+          globalRemarks: remarks.length ? remarks.join("\n") : undefined,
           pages: p.pages.map((pg) => {
-            const ov = res.pages.find((o) => o.pageId === pg.id);
+            const ov = overviews.find((o) => o.pageId === pg.id);
             if (!ov) return pg;
             return {
               ...pg,
               overview: ov,
               // Le niveau proposé par l'IA ne remplace pas un choix déjà fait par l'utilisateur.
               levelId: pg.levelId ?? ov.levelId,
-              // Idem pour la calibration : l'indication IA n'écrase pas une calibration manuelle.
-              calibration:
-                pg.calibration ??
-                (ov.scaleHint
-                  ? { a: ov.scaleHint.a, b: ov.scaleHint.b, meters: ov.scaleHint.meters, source: "ia" }
-                  : null),
+              // La calibration ne remplace jamais une calibration existante
+              // (vectorielle auto ou manuelle). Par ordre de fiabilité :
+              // échelle nominale lue (exacte si PDF), sinon cote repérée par l'IA.
+              calibration: pg.calibration ?? calibrationFromOverview(pg, ov),
             };
           }),
         }));
       } catch (err) {
         set({ error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        set({ busy: false, progress: null });
+      }
+    },
+
+    verifyLayer: async (pageId, articleId) => {
+      const { current } = get();
+      const page = current?.pages.find((pg) => pg.id === pageId);
+      const article = getArticle(articleId);
+      if (!current || !page || !article) return;
+      const layer = findLayer(current, pageId, articleId);
+      const existing = (layer?.elements ?? []).map((e) => ({ label: e.label, points: e.points }));
+      set({
+        busy: true,
+        error: null,
+        progress: {
+          stage: "layers",
+          label: `Vérification — ${article.label}`,
+          done: 0,
+          total: 1,
+        },
+      });
+      mutateLayer(pageId, articleId, (l) => ({ ...l, status: "running", error: undefined }));
+      try {
+        const seeds = findSeeds(article, page.vectorText ?? []);
+        const res = await analyzeLayer({
+          pageId,
+          imageDataUrl: page.imageDataUrl,
+          articleId,
+          levelId: page.levelId,
+          context: buildContext(page),
+          seeds: seeds.length ? seeds : undefined,
+          mode: "verify",
+          existing,
+          model: current.model,
+        });
+        // Les éléments manuels sont conservés tels quels : la vérification IA
+        // ne peut pas défaire une correction humaine (le dédoublonnage les
+        // privilégie en cas de recouvrement).
+        const manual = (layer?.elements ?? []).filter((e) => e.source === "manuel");
+        mutateLayer(pageId, articleId, (l) => ({
+          ...l,
+          elements: refineElements(article, page, [...manual, ...res.elements]),
+          notes: res.notes,
+          status: "done",
+          error: undefined,
+        }));
+      } catch (err) {
+        mutateLayer(pageId, articleId, (l) => ({
+          ...l,
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        }));
       } finally {
         set({ busy: false, progress: null });
       }
@@ -326,6 +483,30 @@ function articlesToAnalyze(page: ProjectPage): string[] {
   const expected = articlesForLevel(page.levelId).map((a) => a.id);
   const detected = page.overview?.articleIds ?? [];
   return [...new Set([...detected.filter((id) => expected.includes(id)), ...expected])];
+}
+
+/**
+ * Calibration proposée par l'analyse générale, par ordre de fiabilité :
+ * échelle nominale lue dans le cartouche (exacte pour un PDF vectoriel),
+ * sinon cote repérée visuellement par l'IA (approximative).
+ */
+function calibrationFromOverview(page: ProjectPage, ov: PageOverview): Calibration | null {
+  if (ov.scaleText && page.renderScale) {
+    const m = /1\s*[:/-]\s*(\d{1,4})/.exec(ov.scaleText);
+    const denom = m ? Number(m[1]) : NaN;
+    if (Number.isFinite(denom) && denom >= 5 && denom <= 1000) {
+      return {
+        kind: "scale",
+        denominator: denom,
+        metersPerPx: metersPerPdfPoint(denom) / page.renderScale,
+        source: "auto",
+      };
+    }
+  }
+  if (ov.scaleHint) {
+    return { a: ov.scaleHint.a, b: ov.scaleHint.b, meters: ov.scaleHint.meters, source: "ia" };
+  }
+  return null;
 }
 
 function buildContext(page: ProjectPage): string | undefined {

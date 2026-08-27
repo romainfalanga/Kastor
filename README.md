@@ -81,6 +81,32 @@ domaine personnalisé configuré dans le dashboard Cloudflare).
   multimodal utilisé ; surchargée au besoin chantier par chantier depuis
   l'interface (champ « Modèle OpenRouter »).
 
+## Fiabilisation : le moteur vectoriel déterministe
+
+Les PDF de plans sont généralement **vectoriels** : ils contiennent les lignes
+exactes du dessin et les textes positionnés (repères, cotes, échelle). Kastor
+les exploite en amont et en aval de l'IA (`shared/vector.ts`,
+`src/services/pdf.ts`) pour éliminer les erreurs :
+
+- **Ancres de repères** : les textes « SF1 », « P2 », « ATTP »… sont extraits
+  avec leurs positions exactes et (1) transmis aux sous-agents comme ancrage,
+  (2) fusionnés algorithmiquement avec les détections — un repère écrit sans
+  détection IA devient un élément à part entière (source « vecteur »).
+- **Calibration exacte** : un PDF a des dimensions physiques exactes
+  (1 pt = 1/72 pouce) ; avec l'échelle nominale (détectée dans le texte du
+  cartouche ou saisie : « Échelle 1/50 »), les mètres/pixel sont calculés
+  mathématiquement — erreur zéro tant que le PDF est à l'échelle. La
+  calibration deux points reste disponible pour les scans.
+- **Accrochage (snapping)** : les sommets des polylignes proposées par l'IA
+  sont recalés sur les lignes vectorielles réelles du plan.
+- **Dédoublonnage** : deux détections ponctuelles quasi confondues sont
+  fusionnées (priorité manuel > vecteur > IA).
+- **Passe de vérification** (bouton ✓ par calque) : le sous-agent critique les
+  éléments retenus (ajoute les manqués, retire les faux) ; les corrections
+  manuelles sont toujours préservées.
+- **Aucune limite de pages** : l'analyse générale découpe automatiquement le
+  dossier en lots d'appels modèle.
+
 ## Notes de conception
 
 - Les métrés en mL exigent une **calibration d'échelle par page** : l'IA
