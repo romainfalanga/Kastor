@@ -1,0 +1,508 @@
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --ink: #1f2937;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #1e40af;
+  --accent-soft: #dbeafe;
+  --danger: #b91c1c;
+  --ok: #047857;
+  --warn: #b45309;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------- Barre supérieure ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.brand-icon {
+  font-size: 22px;
+}
+
+.brand-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.brand-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  border: none;
+  background: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.project-name {
+  margin-left: auto;
+  font-weight: 600;
+}
+
+/* ---------- Bannières ---------- */
+.progress-banner,
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  font-size: 14px;
+}
+
+.progress-banner {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.error-banner {
+  background: #fee2e2;
+  color: var(--danger);
+  justify-content: space-between;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Contenu ---------- */
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 17px;
+}
+
+.card h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.space-between {
+  justify-content: space-between;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 12.5px;
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.block {
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* ---------- Boutons et champs ---------- */
+button {
+  font: inherit;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.ghost {
+  border-color: transparent;
+  background: none;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.model-input {
+  width: 280px;
+}
+
+/* ---------- Accueil ---------- */
+.home {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.home .row input {
+  flex: 1;
+}
+
+.project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.project-open {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: none;
+  background: none;
+  padding: 12px 4px;
+  text-align: left;
+}
+
+/* ---------- Analyse ---------- */
+.pages-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.page-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.page-card img {
+  width: 100%;
+  height: 170px;
+  object-fit: contain;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+
+.page-meta {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.page-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-block;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.badge.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.badge.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.pipeline {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  font-size: 14px;
+}
+
+.pipeline li {
+  margin-bottom: 6px;
+}
+
+/* ---------- Visionneuse ---------- */
+.viewer-layout {
+  display: flex;
+  gap: 16px;
+  height: calc(100vh - 120px);
+}
+
+.layer-sidebar {
+  width: 330px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  margin-bottom: 0;
+}
+
+.viewer-wrap {
+  position: relative;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #d9dce1;
+}
+
+.viewer {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.viewer.tool-pan {
+  cursor: grab;
+}
+
+.viewer.tool-add {
+  cursor: crosshair;
+}
+
+.viewer.tool-calibrate {
+  cursor: crosshair;
+}
+
+.viewer.tool-delete {
+  cursor: not-allowed;
+}
+
+.viewer .clickable {
+  cursor: pointer;
+}
+
+.viewer-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  background: rgba(31, 41, 55, 0.9);
+  color: #fff;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.toolbar {
+  margin: 10px 0;
+}
+
+.tool-btn {
+  width: 40px;
+  height: 36px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.tool-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.layer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.layer-list .layer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border-radius: 8px;
+}
+
+.layer-list .layer.selected {
+  background: var(--accent-soft);
+}
+
+.layer-name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 5px 4px;
+  font-size: 13.5px;
+}
+
+.dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.layer-qty {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.small-btn {
+  padding: 3px 8px;
+}
+
+.layer-notes {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+/* ---------- Tableau ---------- */
+.table-panel {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+table.metres {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+table.metres th,
+table.metres td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+table.metres th {
+  background: var(--bg);
+  font-size: 13px;
+}
+
+table.metres .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+table.metres tr.level-start td {
+  border-top: 2px solid var(--ink);
+  font-weight: inherit;
+}
+
+table.metres tr.level-start td:first-child {
+  font-weight: 700;
+}
+
+.overview-info p {
+  margin: 6px 0 0;
+}

@@ -1,0 +1,5 @@
+# Copier ce fichier en `.dev.vars` pour le développement local (wrangler dev).
+# En production : `wrangler secret put OPENROUTER_API_KEY`
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxx
+# Optionnel : surcharger le modèle par défaut
+# OPENROUTER_MODEL=google/gemini-2.5-pro

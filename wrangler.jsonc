@@ -1,0 +1,21 @@
+{
+  // Configuration Cloudflare Workers pour Kastor.
+  // Déploiement : `npm run deploy` (après `wrangler login`).
+  // Secret requis : `wrangler secret put OPENROUTER_API_KEY`
+  "name": "kastor",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-01-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    // Les requêtes /api/* sont toujours traitées par le Worker, le reste par les assets.
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    // Modèle multimodal OpenRouter par défaut (modifiable aussi depuis l'interface).
+    "OPENROUTER_MODEL": "google/gemini-2.5-pro"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
